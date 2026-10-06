@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "namespace": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "resource_type": {
+      "enum": [
+        "pods",
+        "services",
+        "deployments",
+        "statefulsets",
+        "daemonsets",
+        "jobs",
+        "cronjobs",
+        "pvcs",
+        "ingresses",
+        "serviceaccounts",
+        "configmaps",
+        "secrets",
+        "nodes",
+        "events"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource_type"
+  ],
+  "type": "object"
+}

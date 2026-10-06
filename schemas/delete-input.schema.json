@@ -1,0 +1,22 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "namespace": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "resource_type": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource_type",
+    "name"
+  ],
+  "type": "object"
+}

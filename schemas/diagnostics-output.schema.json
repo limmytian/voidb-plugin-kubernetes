@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "auth_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "connection_type": {
+      "type": "string"
+    },
+    "context_present": {
+      "type": "boolean"
+    },
+    "default_namespace": {
+      "type": "string"
+    },
+    "kubeconfig_path_present": {
+      "type": "boolean"
+    },
+    "network_checked": {
+      "type": "boolean"
+    },
+    "timeout_secs": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "verify_ssl": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "connection_type",
+    "auth_type",
+    "default_namespace",
+    "timeout_secs",
+    "network_checked"
+  ],
+  "type": "object"
+}

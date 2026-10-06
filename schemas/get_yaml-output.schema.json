@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "byte_limit": {
+      "maximum": 1048576,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "bytes_returned": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "name": {
+      "type": "string"
+    },
+    "namespace": {
+      "type": "string"
+    },
+    "resource_type": {
+      "type": "string"
+    },
+    "source_bytes": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "yaml": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource_type",
+    "name",
+    "namespace",
+    "yaml",
+    "bytes_returned",
+    "source_bytes",
+    "truncated",
+    "byte_limit"
+  ],
+  "type": "object"
+}

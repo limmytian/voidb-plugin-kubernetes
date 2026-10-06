@@ -1,0 +1,20 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "context_count": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "contexts": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "contexts",
+    "context_count"
+  ],
+  "type": "object"
+}

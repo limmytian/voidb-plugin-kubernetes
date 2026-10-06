@@ -1,0 +1,108 @@
+{
+  "profile_label": "fixture-kubernetes-ops",
+  "cluster_label": "fixture-kind",
+  "connection_kind": "kubeconfig",
+  "active_namespace": "default",
+  "namespaces": ["default", "ops"],
+  "pods": [
+    {
+      "name": "api-7c8d9f6d8f-4j2mz",
+      "namespace": "default",
+      "status": "Running",
+      "ready": "2/2",
+      "restarts": 0,
+      "age": "12m",
+      "node": "kind-worker",
+      "containers": ["api", "sidecar"]
+    },
+    {
+      "name": "worker-5db7c9f4c9-p8nhx",
+      "namespace": "default",
+      "status": "Pending",
+      "ready": "0/1",
+      "restarts": 1,
+      "age": "4m",
+      "node": null,
+      "containers": ["worker"]
+    },
+    {
+      "name": "sync-778c99f9f7-t9msq",
+      "namespace": "ops",
+      "status": "Running",
+      "ready": "1/1",
+      "restarts": 0,
+      "age": "20m",
+      "node": "kind-worker2",
+      "containers": ["sync"]
+    }
+  ],
+  "deployments": [
+    {
+      "name": "api",
+      "namespace": "default",
+      "ready": "3/3",
+      "up_to_date": 3,
+      "available": 3,
+      "age": "2h"
+    },
+    {
+      "name": "worker",
+      "namespace": "default",
+      "ready": "0/1",
+      "up_to_date": 1,
+      "available": 0,
+      "age": "2h"
+    }
+  ],
+  "services": [
+    {
+      "name": "api",
+      "namespace": "default",
+      "service_type": "ClusterIP",
+      "cluster_ip": "10.96.14.23",
+      "ports": ["8080/TCP"],
+      "age": "2h"
+    }
+  ],
+  "events": [
+    {
+      "event_type": "Warning",
+      "reason": "BackOff",
+      "object": "pod/worker-5db7c9f4c9-p8nhx",
+      "message": "Back-off restarting failed container",
+      "age": "1m",
+      "count": 3
+    },
+    {
+      "event_type": "Normal",
+      "reason": "Scheduled",
+      "object": "pod/api-7c8d9f6d8f-4j2mz",
+      "message": "Successfully assigned default/api-7c8d9f6d8f-4j2mz to kind-worker",
+      "age": "12m",
+      "count": 1
+    }
+  ],
+  "nodes": [
+    {
+      "name": "kind-control-plane",
+      "status": "Ready",
+      "roles": ["control-plane"],
+      "version": "v1.32.0",
+      "age": "1d"
+    },
+    {
+      "name": "kind-worker",
+      "status": "Ready",
+      "roles": ["worker"],
+      "version": "v1.32.0",
+      "age": "1d"
+    }
+  ],
+  "logs": [
+    "2026-07-07T03:20:00Z api request GET /health 200",
+    "2026-07-07T03:20:01Z api request GET /v1/tasks 200",
+    "2026-07-07T03:20:02Z worker waiting for queue lease"
+  ],
+  "status": "fixture kubernetes operations ready",
+  "rbac_error": "forbidden: user fixture cannot list secrets in namespace default"
+}

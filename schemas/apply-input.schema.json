@@ -1,0 +1,17 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "namespace": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "yaml": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "yaml"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "max_bytes": {
+      "default": 65536,
+      "maximum": 1048576,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "namespace": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "resource_type": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "resource_type",
+    "name"
+  ],
+  "type": "object"
+}

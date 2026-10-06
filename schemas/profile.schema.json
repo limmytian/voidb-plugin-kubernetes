@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "connection": {
+      "properties": {
+        "api_url": {
+          "description": "API server URL for direct connection, e.g. https://k8s.example.com:6443",
+          "type": "string"
+        },
+        "auth": {
+          "properties": {
+            "cert_path": {
+              "description": "Client certificate path",
+              "type": "string"
+            },
+            "key_path": {
+              "description": "Client private key path",
+              "type": "string"
+            },
+            "token": {
+              "description": "Bearer token",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "Token",
+                "ClientCert",
+                "InCluster"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        "ca_cert": {
+          "description": "Path to CA certificate (PEM)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context": {
+          "description": "Context to use (None = current context)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Path to kubeconfig file (None = ~/.kube/config or KUBECONFIG env)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "enum": [
+            "Kubeconfig",
+            "Direct"
+          ],
+          "type": "string"
+        },
+        "verify_ssl": {
+          "default": true,
+          "description": "Whether to verify TLS certificates",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "default_namespace": {
+      "description": "Default namespace (None = 'default')",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timeout": {
+      "default": 30,
+      "description": "Request timeout in seconds",
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "connection"
+  ],
+  "title": "KubernetesConnectionProfile",
+  "type": "object"
+}

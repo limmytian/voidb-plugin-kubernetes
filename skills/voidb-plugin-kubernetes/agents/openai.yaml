@@ -1,0 +1,4 @@
+interface:
+  display_name: "VoidB Kubernetes Plugin"
+  short_description: "Guide for VoidB Kubernetes work"
+  default_prompt: "Use $voidb-plugin-kubernetes to update the VoidB Kubernetes plugin, capabilities, CLI, or operations TUI."
