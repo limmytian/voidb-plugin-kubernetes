@@ -4,6 +4,8 @@
 //! capability surface against a disposable local kind fixture using only the
 //! generated kubeconfig and scratch namespace from the fixture environment.
 
+#![allow(clippy::result_large_err)]
+
 use anyhow::{Context, Result, bail, ensure};
 use chrono::Utc;
 use serde_json::{Value, json};
