@@ -1,6 +1,6 @@
 id = "kubernetes"
 name = "Kubernetes Cluster Management Plugin"
-version = "0.3.0"
+version = "0.3.3"
 protocol_version = "1"
 description = "Kubernetes cluster and workload management plugin for VoidB."
 license = "Apache-2.0"

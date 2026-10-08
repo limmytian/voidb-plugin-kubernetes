@@ -53,7 +53,13 @@ impl CliPlugin for K8sCliPlugin {
         vec![
             Command::new("test")
                 .about("Test Kubernetes connection and show cluster info")
-                .arg(conn_arg.clone()),
+                .arg(conn_arg.clone().required(false))
+                .arg(
+                    Arg::new("stdin-config")
+                        .long("stdin-config")
+                        .action(ArgAction::SetTrue)
+                        .help("Read connection configuration JSON from stdin"),
+                ),
             Command::new("contexts")
                 .about("List contexts from kubeconfig")
                 .arg(conn_arg.clone()),
@@ -317,9 +323,18 @@ impl CliPlugin for K8sCliPlugin {
 
 impl K8sCliPlugin {
     fn parse_config(conn_name: &str, ctx: &CliContext) -> Result<K8sConfig, VoidbError> {
-        let conn = ctx
-            .find_connection(conn_name)
-            .ok_or_else(|| VoidbError::Plugin(format!("Connection '{}' not found", conn_name)))?;
+        let conn = if let Some(conn) = ctx.find_connection(conn_name) {
+            conn.clone()
+        } else if let Ok((_profile, conn)) =
+            ctx.resolve_profile_connection(conn_name, Some("kubernetes"))
+        {
+            conn
+        } else {
+            return Err(VoidbError::Plugin(format!(
+                "Connection or profile '{}' not found",
+                conn_name
+            )));
+        };
 
         if conn.effective_plugin_id() != "kubernetes" {
             return Err(VoidbError::Plugin(format!(
@@ -494,8 +509,35 @@ impl K8sCliPlugin {
     }
 
     async fn handle_test(&self, matches: &ArgMatches, ctx: &CliContext) -> Result<(), VoidbError> {
-        let conn_name = matches.get_one::<String>("connection").unwrap().clone();
-        let svc = self.connect(matches, ctx).await?;
+        let (conn_name, config) = if matches.get_flag("stdin-config") {
+            use std::io::Read;
+            let mut input = String::new();
+            std::io::stdin()
+                .read_to_string(&mut input)
+                .map_err(|e| VoidbError::Config(format!("Failed to read stdin: {}", e)))?;
+            let val: serde_json::Value = serde_json::from_str(&input)
+                .map_err(|e| VoidbError::Config(format!("Invalid JSON on stdin: {}", e)))?;
+            let name = val
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("stdin")
+                .to_string();
+            let plugin_val = val.get("plugin_config").unwrap_or(&val);
+            let cfg: K8sConfig = serde_json::from_value(plugin_val.clone())
+                .map_err(|e| VoidbError::Config(format!("Invalid Kubernetes config: {}", e)))?;
+            (name, cfg)
+        } else if let Some(conn_name) = matches.get_one::<String>("connection") {
+            let cfg = Self::parse_config(conn_name, ctx)?;
+            (conn_name.clone(), cfg)
+        } else {
+            return Err(VoidbError::Plugin(
+                "Either --connection or --stdin-config is required".into(),
+            ));
+        };
+
+        let svc = K8sService::new_direct(&config)
+            .await
+            .map_err(|e| VoidbError::Plugin(e.to_string()))?;
 
         let info = svc
             .test_connection_direct()
