@@ -11,237 +11,1412 @@ command = "voidb-plugin-kubernetes"
 args = ["serve"]
 transport = "stdio-jsonrpc"
 
+[runtime.env]
+
 [connections]
 profile_schema = "schemas/profile.schema.json"
-secret_classes = ["token", "client_certificate"]
+secret_classes = [
+    "token",
+    "client_certificate",
+]
 
 [[capabilities]]
 id = "diagnostics"
 description = "Return agent-safe Kubernetes profile diagnostics without opening a cluster connection."
 input_schema = "schemas/diagnostics-input.schema.json"
 output_schema = "schemas/diagnostics-output.schema.json"
-permissions = ["connection.read", "kubernetes.diagnostics"]
+permissions = [
+    "connection.read",
+    "kubernetes.diagnostics",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+capability_wide_allowed = true
 
 [[capabilities]]
 id = "contexts"
 description = "List kubeconfig contexts without connecting to the cluster."
 input_schema = "schemas/contexts-input.schema.json"
 output_schema = "schemas/contexts-output.schema.json"
-permissions = ["connection.read", "kubernetes.contexts"]
+permissions = [
+    "connection.read",
+    "kubernetes.contexts",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+capability_wide_allowed = true
 
 [[capabilities]]
 id = "namespaces"
 description = "List Kubernetes namespaces."
 input_schema = "schemas/namespaces-input.schema.json"
 output_schema = "schemas/namespaces-output.schema.json"
-permissions = ["connection.read", "kubernetes.namespaces"]
+permissions = [
+    "connection.read",
+    "kubernetes.namespaces",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+capability_wide_allowed = true
 
 [[capabilities]]
 id = "list"
 description = "List Kubernetes resources with bounded, cursor-based output."
 input_schema = "schemas/list-input.schema.json"
 output_schema = "schemas/list-output.schema.json"
-permissions = ["connection.read", "kubernetes.resources.list"]
+permissions = [
+    "connection.read",
+    "kubernetes.resources.list",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource_type"
+label = "Resource type"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
 
 [[capabilities]]
 id = "get_yaml"
 description = "Get one Kubernetes resource as bounded YAML; Secret payloads are not exposed."
 input_schema = "schemas/get_yaml-input.schema.json"
 output_schema = "schemas/get_yaml-output.schema.json"
-permissions = ["connection.read", "kubernetes.resources.get"]
+permissions = [
+    "connection.read",
+    "kubernetes.resources.get",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource_type"
+label = "Resource type"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/name"
+label = "Resource name"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
 
 [[capabilities]]
 id = "logs"
 description = "Read bounded pod logs without following the stream."
 input_schema = "schemas/logs-input.schema.json"
 output_schema = "schemas/logs-output.schema.json"
-permissions = ["connection.read", "kubernetes.pods.logs"]
+permissions = [
+    "connection.read",
+    "kubernetes.pods.logs",
+]
 risk = "read_only"
 destructive = false
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Pod, namespace, and container are revalidated before bounded log access."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/container"
+label = "Container"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
 
 [[capabilities]]
 id = "watch_events"
 description = "Watch one namespaced or cluster-scoped Kubernetes API resource with resource-version continuation."
 input_schema = "schemas/watch_events-input.schema.json"
 output_schema = "schemas/watch_events-output.schema.json"
-permissions = ["connection.read", "kubernetes.resources.watch"]
+permissions = [
+    "connection.read",
+    "kubernetes.resources.watch",
+]
 risk = "read_only"
 destructive = false
 streaming = true
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "watch_stream"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/api_version"
+label = "API version"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/kind"
+label = "Resource kind"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/plural"
+label = "Resource plural"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[capabilities.session_handoff]
+capabilities = ["kubernetes.watch_events"]
+
+[capabilities.session_handoff.purpose]
+kind = "watch_stream"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "read_only"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "watch"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_api_resource"
+identity_fields = [
+    "/api_version",
+    "/kind",
+    "/plural",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "api_version",
+    "kind",
+    "plural",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.api_version]
+maxLength = 256
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.kind]
+maxLength = 128
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.plural]
+maxLength = 128
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.field_selector]
+maxLength = 1024
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.label_selector]
+maxLength = 1024
+type = "string"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.watch_events"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 2000
+max_bytes = 2097152
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "transient"
+max_attempts = 32
+initial_backoff_ms = 250
+max_backoff_ms = 10000
+resume = "exact_cursor"
+cursor_kind = "resource_version"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "stop_observation"
 
 [[capabilities]]
 id = "logs_follow"
 description = "Follow one explicit pod container log stream with bounded retention."
 input_schema = "schemas/logs_follow-input.schema.json"
 output_schema = "schemas/logs_follow-output.schema.json"
-permissions = ["connection.read", "kubernetes.pods.logs"]
+permissions = [
+    "connection.read",
+    "kubernetes.pods.logs",
+]
 risk = "read_only"
 destructive = false
 streaming = true
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "log_stream"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/container"
+label = "Container"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[capabilities.session_handoff]
+capabilities = ["kubernetes.logs_follow"]
+
+[capabilities.session_handoff.purpose]
+kind = "log_stream"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "read_only"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "log"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_pod_container"
+identity_fields = [
+    "/namespace",
+    "/pod",
+    "/container",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "namespace",
+    "pod",
+    "container",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.container]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.pod]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.previous]
+default = false
+type = "boolean"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.tail]
+default = 100
+maximum = 5000
+minimum = 1
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.timestamps]
+default = true
+type = "boolean"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.logs_follow"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 2000
+max_bytes = 2097152
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "transient"
+max_attempts = 8
+initial_backoff_ms = 250
+max_backoff_ms = 10000
+resume = "best_effort_cursor"
+cursor_kind = "timestamp"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "stop_observation"
 
 [[capabilities]]
 id = "exec_read"
 description = "Read output from one explicitly configured Kubernetes pod exec."
 input_schema = "schemas/exec_read-input.schema.json"
 output_schema = "schemas/exec_read-output.schema.json"
-permissions = ["connection.read", "kubernetes.pods.exec"]
+permissions = [
+    "connection.read",
+    "kubernetes.pods.exec",
+]
 risk = "read_only"
 destructive = false
 streaming = true
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = true
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "interactive_terminal"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/container"
+label = "Container"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/parameters/command"
+label = "Exec command"
+value_type = "command_argv"
+required = true
+constraint = "exact"
+risk_emphasis = "privilege_escalation"
+
+[capabilities.session_handoff]
+capabilities = [
+    "kubernetes.exec_read",
+    "kubernetes.exec_input",
+    "kubernetes.exec_resize",
+]
+
+[capabilities.session_handoff.purpose]
+kind = "interactive_terminal"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "external_side_effect"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "exec"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_pod_container"
+identity_fields = [
+    "/namespace",
+    "/pod",
+    "/container",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "namespace",
+    "pod",
+    "container",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.container]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.pod]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+required = ["command"]
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.cols]
+default = 120
+maximum = 500
+minimum = 20
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command]
+maxItems = 64
+minItems = 1
+type = "array"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command.items]
+maxLength = 4096
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.rows]
+default = 40
+maximum = 200
+minimum = 5
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.tty]
+default = true
+type = "boolean"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.exec_read"
+input = "kubernetes.exec_input"
+resize = "kubernetes.exec_resize"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 1000
+max_bytes = 1048576
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "never"
+max_attempts = 0
+initial_backoff_ms = 0
+max_backoff_ms = 0
+resume = "unsupported"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "terminate_remote"
 
 [[capabilities]]
 id = "exec_input"
 description = "Write bounded text to one controlled Kubernetes pod exec."
 input_schema = "schemas/exec_input-input.schema.json"
 output_schema = "schemas/exec_input-output.schema.json"
-permissions = ["connection.write", "kubernetes.pods.exec"]
+permissions = [
+    "connection.write",
+    "kubernetes.pods.exec",
+]
 risk = "external_side_effect"
 destructive = false
 streaming = false
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = true
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "interactive_terminal"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/container"
+label = "Container"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/parameters/command"
+label = "Exec command"
+value_type = "command_argv"
+required = true
+constraint = "exact"
+risk_emphasis = "privilege_escalation"
+
+[capabilities.session_handoff]
+capabilities = [
+    "kubernetes.exec_read",
+    "kubernetes.exec_input",
+    "kubernetes.exec_resize",
+]
+
+[capabilities.session_handoff.purpose]
+kind = "interactive_terminal"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "external_side_effect"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "exec"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_pod_container"
+identity_fields = [
+    "/namespace",
+    "/pod",
+    "/container",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "namespace",
+    "pod",
+    "container",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.container]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.pod]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+required = ["command"]
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.cols]
+default = 120
+maximum = 500
+minimum = 20
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command]
+maxItems = 64
+minItems = 1
+type = "array"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command.items]
+maxLength = 4096
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.rows]
+default = 40
+maximum = 200
+minimum = 5
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.tty]
+default = true
+type = "boolean"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.exec_read"
+input = "kubernetes.exec_input"
+resize = "kubernetes.exec_resize"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 1000
+max_bytes = 1048576
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "never"
+max_attempts = 0
+initial_backoff_ms = 0
+max_backoff_ms = 0
+resume = "unsupported"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "terminate_remote"
 
 [[capabilities]]
 id = "exec_resize"
 description = "Resize one controlled Kubernetes pod exec TTY."
 input_schema = "schemas/exec_resize-input.schema.json"
 output_schema = "schemas/exec_resize-output.schema.json"
-permissions = ["connection.write", "kubernetes.pods.exec"]
+permissions = [
+    "connection.write",
+    "kubernetes.pods.exec",
+]
 risk = "external_side_effect"
 destructive = false
 streaming = false
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = true
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "interactive_terminal"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/container"
+label = "Container"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/parameters/command"
+label = "Exec command"
+value_type = "command_argv"
+required = true
+constraint = "exact"
+risk_emphasis = "privilege_escalation"
+
+[capabilities.session_handoff]
+capabilities = [
+    "kubernetes.exec_read",
+    "kubernetes.exec_input",
+    "kubernetes.exec_resize",
+]
+
+[capabilities.session_handoff.purpose]
+kind = "interactive_terminal"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "external_side_effect"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "exec"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_pod_container"
+identity_fields = [
+    "/namespace",
+    "/pod",
+    "/container",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "namespace",
+    "pod",
+    "container",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.container]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.pod]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+required = ["command"]
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.cols]
+default = 120
+maximum = 500
+minimum = 20
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command]
+maxItems = 64
+minItems = 1
+type = "array"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.command.items]
+maxLength = 4096
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.rows]
+default = 40
+maximum = 200
+minimum = 5
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.tty]
+default = true
+type = "boolean"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.exec_read"
+input = "kubernetes.exec_input"
+resize = "kubernetes.exec_resize"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 1000
+max_bytes = 1048576
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "never"
+max_attempts = 0
+initial_backoff_ms = 0
+max_backoff_ms = 0
+resume = "unsupported"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "terminate_remote"
 
 [[capabilities]]
 id = "port_forward_events"
 description = "Open one loopback-only pod port forward and report bounded connection state."
 input_schema = "schemas/port_forward_events-input.schema.json"
 output_schema = "schemas/port_forward_events-output.schema.json"
-permissions = ["connection.write", "kubernetes.pods.port_forward"]
+permissions = [
+    "connection.write",
+    "kubernetes.pods.port_forward",
+]
 risk = "read_only"
 destructive = false
 streaming = true
+execution_mode = "session_only"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = false
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = true
+note = "Kubernetes namespace, resource, pod, container, command, and port scope are revalidated at session open."
+capability_wide_allowed = true
+
+[[capabilities.authorization.session_purposes]]
+kind = "port_forward"
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource/pod"
+label = "Pod"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/parameters/remote_port"
+label = "Remote port"
+value_type = "integer"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/parameters/local_port"
+label = "Local port"
+value_type = "integer"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
+
+[capabilities.session_handoff]
+capabilities = ["kubernetes.port_forward_events"]
+
+[capabilities.session_handoff.purpose]
+kind = "port_forward"
+
+[capabilities.session_handoff.live_session]
+protocol_version = 1
+start_risk = "external_side_effect"
+
+[capabilities.session_handoff.live_session.kind]
+kind = "port_forward"
+
+[capabilities.session_handoff.live_session.resource]
+resource_type = "kubernetes_pod"
+identity_fields = [
+    "/namespace",
+    "/pod",
+]
+audit_identity = "fingerprint"
+
+[capabilities.session_handoff.live_session.resource.identity_schema]
+additionalProperties = false
+required = [
+    "namespace",
+    "pod",
+]
+type = "object"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.namespace]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.resource.identity_schema.properties.pod]
+maxLength = 253
+minLength = 1
+type = "string"
+
+[capabilities.session_handoff.live_session.start_parameters_schema]
+additionalProperties = false
+required = ["remote_port"]
+type = "object"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.local_port]
+default = 0
+maximum = 65535
+minimum = 0
+type = "integer"
+
+[capabilities.session_handoff.live_session.start_parameters_schema.properties.remote_port]
+maximum = 65535
+minimum = 1
+type = "integer"
+
+[capabilities.session_handoff.live_session.event_schema]
+maxProperties = 20
+type = "object"
+
+[capabilities.session_handoff.live_session.operations]
+events = "kubernetes.port_forward_events"
+
+[capabilities.session_handoff.live_session.buffer]
+max_events = 128
+max_bytes = 524288
+overflow = "drop_oldest"
+
+[capabilities.session_handoff.live_session.reconnect]
+mode = "never"
+max_attempts = 0
+initial_backoff_ms = 0
+max_backoff_ms = 0
+resume = "unsupported"
+
+[capabilities.session_handoff.live_session.delivery]
+backpressure = "bounded_buffer"
+cursor_scope = "optional"
+max_read_wait_ms = 30000
+
+[capabilities.session_handoff.live_session.delivery.heartbeat]
+
+[capabilities.session_handoff.live_session.control]
+cancel = "call_only"
+close = "detach_remote"
 
 [[capabilities]]
 id = "delete"
 description = "Delete one namespaced Kubernetes resource."
 input_schema = "schemas/delete-input.schema.json"
 output_schema = "schemas/delete-output.schema.json"
-permissions = ["connection.write", "kubernetes.resources.delete"]
+permissions = [
+    "connection.write",
+    "kubernetes.resources.delete",
+]
 risk = "destructive"
 destructive = true
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = true
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/resource_type"
+label = "Resource type"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/name"
+label = "Resource name"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
 
 [[capabilities]]
 id = "scale"
 description = "Scale a Kubernetes deployment to a requested replica count."
 input_schema = "schemas/scale-input.schema.json"
 output_schema = "schemas/scale-output.schema.json"
-permissions = ["connection.write", "kubernetes.deployments.scale"]
+permissions = [
+    "connection.write",
+    "kubernetes.deployments.scale",
+]
 risk = "destructive"
 destructive = true
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = true
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/name"
+label = "Deployment"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/replicas"
+label = "Maximum replicas"
+value_type = "integer"
+required = true
+constraint = "maximum"
+risk_emphasis = "privilege_escalation"
 
 [[capabilities]]
 id = "restart"
 description = "Trigger a Kubernetes deployment rollout restart."
 input_schema = "schemas/restart-input.schema.json"
 output_schema = "schemas/restart-output.schema.json"
-permissions = ["connection.write", "kubernetes.deployments.restart"]
+permissions = [
+    "connection.write",
+    "kubernetes.deployments.restart",
+]
 risk = "destructive"
 destructive = true
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = true
 default_timeout_ms = 30000
+
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/name"
+label = "Deployment"
+value_type = "resource_id"
+required = true
+constraint = "exact"
+risk_emphasis = "normal"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
 
 [[capabilities]]
 id = "apply"
 description = "Apply one Kubernetes YAML manifest."
 input_schema = "schemas/apply-input.schema.json"
 output_schema = "schemas/apply-output.schema.json"
-permissions = ["connection.write", "kubernetes.resources.apply"]
+permissions = [
+    "connection.write",
+    "kubernetes.resources.apply",
+]
 risk = "destructive"
 destructive = true
 streaming = false
+execution_mode = "stateless"
 connection_required = true
 required_secret_classes = []
 supports_dry_run = true
 default_timeout_ms = 30000
 
+[capabilities.authorization]
+declared = true
+interactive_execute = false
+session_purposes = []
+note = "Kubernetes resource, namespace, and operation fields are revalidated."
+capability_wide_allowed = true
+
+[capabilities.authorization.approval_schema]
+version = 1
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/yaml"
+label = "Manifest"
+value_type = "string"
+required = true
+constraint = "exact"
+risk_emphasis = "privilege_escalation"
+
+[[capabilities.authorization.approval_schema.fields]]
+path = "/namespace"
+label = "Namespace"
+value_type = "resource_id"
+required = false
+constraint = "exact"
+risk_emphasis = "normal"
+
 [ui]
 tui = true
+raw_input = false
 
 [requirements]
 voidb_core = ">=0.1.0"
-platforms = ["darwin", "linux", "windows"]
+platforms = [
+    "darwin",
+    "linux",
+    "windows",
+]
