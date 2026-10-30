@@ -31,6 +31,7 @@ use crate::config::{K8sAuth, K8sConfig, K8sConnection};
 use crate::service::{K8sCommand, K8sService, K8sServiceEvent};
 use crate::types::{DeploymentInfo, EventInfo, NodeInfo, PodInfo, PodStatus, ServiceInfo};
 
+const BROWSER_HINTS: &str = "1-5 kind N namespaces n next-ns j/k move PgUp/PgDn page / filter i yaml l logs s scale x delete R restart e exec w watch A auto r refresh a share y confirm Esc cancel ? help q quit";
 const LOG_LINE_LIMIT: usize = 2_000;
 const LOG_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 const EXEC_LINE_LIMIT: usize = 1_000;
@@ -39,6 +40,8 @@ const YAML_LINE_LIMIT: usize = 200;
 const YAML_BYTE_LIMIT: usize = 128 * 1024;
 const EVENT_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 const OPERATION_SYNC_INTERVAL: Duration = Duration::from_millis(250);
+const AUTO_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const PAGE_STEP: isize = 10;
 pub const K8S_AGENT_CONTEXT_STORE_DIR_ENV: &str = "VOIDB_KUBERNETES_AGENT_CONTEXT_DIR";
 #[doc(hidden)]
 pub const LEGACY_K8S_ASSIST_STORE_DIR_ENV: &str = "VOIDB_KUBERNETES_ASSIST_DIR";
@@ -354,9 +357,21 @@ enum ResourceKind {
 enum Mode {
     Browser,
     Filter,
-    Help,
-    Error,
     Exec,
+}
+
+/// Full-screen or popup surfaces stacked on top of the browser. Input is
+/// routed to the active overlay first, so each surface owns its key space
+/// instead of overloading browser keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Overlay {
+    None,
+    Help,
+    NamespacePicker,
+    LogViewer,
+    YamlViewer,
+    ScalePrompt,
+    ConfirmQuit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,6 +387,7 @@ enum ResourceItem {
 enum OperationKind {
     DeleteResource,
     RestartDeployment,
+    ScaleDeployment,
     ExecPod,
 }
 
@@ -385,6 +401,7 @@ struct OperationPlanView {
     risk: &'static str,
     confirmations_required: u8,
     confirmations: u8,
+    replicas: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -469,7 +486,16 @@ pub fn build_k8s_tui_evidence(launch: &K8sTuiLaunch) -> Result<Value> {
         "coverage": [
             "startup",
             "namespace_browse",
+            "namespace_picker",
+            "kind_hotkeys",
             "resource_browse",
+            "per_kind_selection",
+            "non_modal_error_banner",
+            "auto_refresh",
+            "log_viewer_scrollback",
+            "yaml_viewer",
+            "scale_plan",
+            "quit_confirmation",
             "pod_detail",
             "workload_detail",
             "events_snapshot",
@@ -633,6 +659,7 @@ fn run_loop(terminal: &mut ratatui::DefaultTerminal, app: &mut K8sTuiApp) -> Res
     loop {
         let mut dirty = app.drain_service();
         app.maybe_poll_event_watch();
+        dirty |= app.maybe_auto_refresh();
         dirty |= app.sync_agent_operation();
         if app.should_quit {
             return Ok(());
@@ -727,13 +754,23 @@ struct K8sTuiApp {
     services: Vec<ServiceView>,
     events: Vec<EventView>,
     nodes: Vec<NodeView>,
-    selected: usize,
+    selections: [usize; ResourceKind::COUNT],
     filter: String,
+    overlay: Overlay,
+    error_banner: Option<String>,
+    pending: [bool; ResourceKind::COUNT],
+    ns_filter: String,
+    ns_selected: usize,
+    log_follow: bool,
+    log_scroll: usize,
+    yaml_scroll: usize,
+    scale_replica_input: String,
+    auto_refresh: bool,
+    last_auto_refresh: Instant,
     service: Option<K8sService>,
     operation_plan: Option<OperationPlanView>,
     status: String,
     mode: Mode,
-    return_mode: Mode,
     logs: BoundedLines,
     exec_output: BoundedLines,
     yaml_preview: BoundedLines,
@@ -808,13 +845,23 @@ impl K8sTuiApp {
             services: data.services,
             events: data.events,
             nodes: data.nodes,
-            selected: 0,
+            selections: [0; ResourceKind::COUNT],
             filter: String::new(),
+            overlay: Overlay::None,
+            error_banner: None,
+            pending: [false; ResourceKind::COUNT],
+            ns_filter: String::new(),
+            ns_selected: 0,
+            log_follow: true,
+            log_scroll: 0,
+            yaml_scroll: 0,
+            scale_replica_input: String::new(),
+            auto_refresh: false,
+            last_auto_refresh: Instant::now(),
             service,
             operation_plan: None,
             status,
             mode: Mode::Browser,
-            return_mode: Mode::Browser,
             logs,
             exec_output: BoundedLines::new(EXEC_LINE_LIMIT, EXEC_BYTE_LIMIT),
             yaml_preview: BoundedLines::new(YAML_LINE_LIMIT, YAML_BYTE_LIMIT),
@@ -903,12 +950,14 @@ impl K8sTuiApp {
                 self.status = format!("loaded {} namespaces", self.namespaces.len());
             }
             K8sServiceEvent::PodsLoaded(pods) => {
+                self.pending[ResourceKind::Pods.index()] = false;
                 self.pods = pods.into_iter().map(PodView::from).collect();
                 self.pods.sort_by(pod_sort);
                 self.trim_selection();
                 self.status = format!("listed {} pods", self.pods.len());
             }
             K8sServiceEvent::DeploymentsLoaded(deployments) => {
+                self.pending[ResourceKind::Deployments.index()] = false;
                 self.deployments = deployments.into_iter().map(DeploymentView::from).collect();
                 self.deployments
                     .sort_by(|left, right| left.name.cmp(&right.name));
@@ -916,6 +965,7 @@ impl K8sTuiApp {
                 self.status = format!("listed {} deployments", self.deployments.len());
             }
             K8sServiceEvent::ServicesLoaded(services) => {
+                self.pending[ResourceKind::Services.index()] = false;
                 self.services = services.into_iter().map(ServiceView::from).collect();
                 self.services
                     .sort_by(|left, right| left.name.cmp(&right.name));
@@ -923,10 +973,12 @@ impl K8sTuiApp {
                 self.status = format!("listed {} services", self.services.len());
             }
             K8sServiceEvent::EventsLoaded(events) => {
+                self.pending[ResourceKind::Events.index()] = false;
                 self.events = events.into_iter().map(EventView::from).collect();
                 self.status = format!("listed {} events", self.events.len());
             }
             K8sServiceEvent::NodesLoaded(nodes) => {
+                self.pending[ResourceKind::Nodes.index()] = false;
                 self.nodes = nodes.into_iter().map(NodeView::from).collect();
                 self.nodes.sort_by(|left, right| left.name.cmp(&right.name));
                 self.trim_selection();
@@ -935,7 +987,9 @@ impl K8sTuiApp {
             K8sServiceEvent::YamlLoaded(yaml) => {
                 self.yaml_preview.clear();
                 self.yaml_preview.push_text(&redact_yaml_preview(&yaml));
-                self.status = "resource YAML preview loaded with secret data redacted".to_string();
+                self.yaml_scroll = 0;
+                self.overlay = Overlay::YamlViewer;
+                self.status = "resource YAML loaded with secret data redacted".to_string();
             }
             K8sServiceEvent::LogLine { text } => {
                 self.logs.push_line(text);
@@ -973,8 +1027,11 @@ impl K8sTuiApp {
                 self.status = format!("loaded {} kubeconfig contexts", contexts.len());
             }
             K8sServiceEvent::Error(message) => {
-                self.mode = Mode::Error;
-                self.status = safe_error_summary(&message);
+                // Background and request failures surface as a non-modal
+                // banner so a failing watch or log stream never hijacks the
+                // browser.
+                self.error_banner = Some(message);
+                self.status = safe_error_summary(self.error_banner.as_deref().unwrap_or(""));
             }
             K8sServiceEvent::StatefulSetsLoaded(_)
             | K8sServiceEvent::DaemonSetsLoaded(_)
@@ -995,15 +1052,37 @@ impl K8sTuiApp {
             self.handle_exec_key(key);
             return;
         }
-        if self.mode == Mode::Help {
-            self.mode = self.return_mode;
-            self.status = format!("returned to {}", mode_label(self.mode));
-            return;
-        }
-        if self.mode == Mode::Error {
-            self.mode = Mode::Browser;
-            self.status = "returned to kubernetes browser".to_string();
-            return;
+        // The error banner is informational: any key acknowledges it while
+        // the key itself keeps its normal meaning, so background failures
+        // never trap the operator in a modal.
+        self.error_banner = None;
+        match self.overlay {
+            Overlay::None => {}
+            Overlay::Help => {
+                self.overlay = Overlay::None;
+                self.status = "help closed".to_string();
+                return;
+            }
+            Overlay::NamespacePicker => {
+                self.handle_namespace_picker_key(key);
+                return;
+            }
+            Overlay::LogViewer => {
+                self.handle_log_viewer_key(key);
+                return;
+            }
+            Overlay::YamlViewer => {
+                self.handle_yaml_viewer_key(key);
+                return;
+            }
+            Overlay::ScalePrompt => {
+                self.handle_scale_prompt_key(key);
+                return;
+            }
+            Overlay::ConfirmQuit => {
+                self.handle_confirm_quit_key(key);
+                return;
+            }
         }
         if self.mode == Mode::Filter {
             self.handle_filter_key(key);
@@ -1011,23 +1090,25 @@ impl K8sTuiApp {
         }
 
         match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('q') => self.request_quit(),
             KeyCode::Tab => self.next_resource(),
             KeyCode::BackTab => self.previous_resource(),
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            KeyCode::Home | KeyCode::Char('g') => self.selected = 0,
+            KeyCode::PageUp => self.move_selection(-PAGE_STEP),
+            KeyCode::PageDown => self.move_selection(PAGE_STEP),
+            KeyCode::Home | KeyCode::Char('g') => self.set_selected(0),
             KeyCode::End | KeyCode::Char('G') => {
-                self.selected = self.filtered_items().len().saturating_sub(1);
+                let len = self.filtered_items().len();
+                self.set_selected(len.saturating_sub(1));
             }
             KeyCode::Enter | KeyCode::Char('i') => self.inspect_selected(),
             KeyCode::Char('/') => {
-                self.return_mode = self.mode;
                 self.mode = Mode::Filter;
-                self.status = "filter: type text, Enter apply, Esc clear".to_string();
+                self.status = "filter: type to narrow live, Enter apply, Esc clear".to_string();
             }
             KeyCode::Char('n') => self.next_namespace(),
-            KeyCode::Char('N') => self.previous_namespace(),
+            KeyCode::Char('N') => self.open_namespace_picker(),
             KeyCode::Char('r') => self.refresh_current(),
             KeyCode::Char('l') => self.start_logs(),
             KeyCode::Char('w') => self.toggle_event_watch(),
@@ -1035,6 +1116,8 @@ impl K8sTuiApp {
             KeyCode::Char('e') => self.plan_exec(),
             KeyCode::Char('x') | KeyCode::Delete => self.plan_delete(),
             KeyCode::Char('R') => self.plan_restart(),
+            KeyCode::Char('s') => self.plan_scale(),
+            KeyCode::Char('A') => self.toggle_auto_refresh(),
             KeyCode::Char('a') => self.share_agent_context(),
             KeyCode::Char('y')
                 if self.operation_request.is_some() && self.operation_plan.is_none() =>
@@ -1049,10 +1132,12 @@ impl K8sTuiApp {
             KeyCode::Char('y') => self.confirm_plan(),
             KeyCode::Esc => self.cancel_plan(),
             KeyCode::Char('?') => self.show_help(),
+            KeyCode::Char(digit @ '1'..='5') => {
+                let index = digit.to_digit(10).unwrap_or(1) as usize - 1;
+                self.set_active_kind(ResourceKind::ALL[index]);
+            }
             _ => {
-                self.status =
-                    "k8s: Tab resources, n/N namespace, j/k move, i inspect, l logs, w events, a share context, y/d review agent operation, e exec, x/R plan, q quit"
-                        .to_string();
+                self.status = format!("k8s: {}", BROWSER_HINTS);
             }
         }
     }
@@ -1060,23 +1145,27 @@ impl K8sTuiApp {
     fn handle_filter_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
-                self.mode = self.return_mode;
-                self.selected = 0;
-                self.status = format!("filter applied: {}", self.filter_label());
+                self.mode = Mode::Browser;
+                self.set_selected(0);
+                self.status = format!(
+                    "filter applied: {} ({} matches)",
+                    self.filter_label(),
+                    self.filtered_items().len()
+                );
             }
             KeyCode::Esc => {
                 self.filter.clear();
-                self.mode = self.return_mode;
-                self.selected = 0;
+                self.mode = Mode::Browser;
+                self.set_selected(0);
                 self.status = "filter cleared".to_string();
             }
             KeyCode::Backspace => {
                 self.filter.pop();
-                self.selected = 0;
+                self.set_selected(0);
             }
             KeyCode::Char(ch) => {
                 self.filter.push(ch);
-                self.selected = 0;
+                self.set_selected(0);
             }
             _ => {}
         }
@@ -1115,14 +1204,278 @@ impl K8sTuiApp {
         }
     }
 
+    fn selected(&self) -> usize {
+        self.selections[self.active.index()]
+    }
+
+    fn set_selected(&mut self, value: usize) {
+        let len = self.filtered_items().len();
+        self.selections[self.active.index()] = value.min(len.saturating_sub(1));
+    }
+
     fn move_selection(&mut self, delta: isize) {
         let len = self.filtered_items().len();
         if len == 0 {
-            self.selected = 0;
+            self.set_selected(0);
             return;
         }
         let last = len as isize - 1;
-        self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
+        let next = (self.selected() as isize + delta).clamp(0, last) as usize;
+        self.set_selected(next);
+    }
+
+    fn set_active_kind(&mut self, kind: ResourceKind) {
+        if self.active == kind {
+            return;
+        }
+        // Selection is remembered per kind, so hopping between resource
+        // types no longer resets the operator's place.
+        self.active = kind;
+        self.status = format!("resource view: {}", kind.label());
+    }
+
+    fn open_namespace_picker(&mut self) {
+        if self.namespaces.is_empty() {
+            self.status = "no namespaces loaded yet; press r to refresh".to_string();
+            return;
+        }
+        self.ns_filter.clear();
+        self.ns_selected = 0;
+        self.overlay = Overlay::NamespacePicker;
+        self.status = "namespace picker: type to narrow, Enter switch, Esc close".to_string();
+    }
+
+    fn filtered_namespaces(&self) -> Vec<&String> {
+        let needle = self.ns_filter.to_lowercase();
+        self.namespaces
+            .iter()
+            .filter(|ns| needle.is_empty() || ns.to_lowercase().contains(&needle))
+            .collect()
+    }
+
+    fn handle_namespace_picker_key(&mut self, key: KeyEvent) {
+        let matches = self.filtered_namespaces().len();
+        match key.code {
+            KeyCode::Esc => {
+                self.overlay = Overlay::None;
+                self.status = "namespace picker closed".to_string();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.ns_selected = self.ns_selected.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if matches > 0 {
+                    self.ns_selected = (self.ns_selected + 1).min(matches - 1);
+                }
+            }
+            KeyCode::Enter => self.apply_namespace_selection(),
+            KeyCode::Backspace => {
+                self.ns_filter.pop();
+                self.ns_selected = 0;
+            }
+            KeyCode::Char(ch) => {
+                self.ns_filter.push(ch);
+                self.ns_selected = 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_namespace_selection(&mut self) {
+        let matches = self.filtered_namespaces();
+        let Some(namespace) = matches.get(self.ns_selected).cloned() else {
+            self.status = "no namespace matches the picker filter".to_string();
+            return;
+        };
+        let namespace = namespace.clone();
+        self.overlay = Overlay::None;
+        if namespace == self.active_namespace {
+            self.status = format!("already in namespace {namespace}");
+            return;
+        }
+        self.active_namespace = namespace;
+        self.selections = [0; ResourceKind::COUNT];
+        self.refresh_all();
+    }
+
+    fn open_log_viewer(&mut self) {
+        self.overlay = Overlay::LogViewer;
+        self.log_follow = true;
+        self.log_scroll = 0;
+    }
+
+    fn handle_log_viewer_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.overlay = Overlay::None;
+                self.status = if self.active_log_pod.is_some() {
+                    "log viewer closed; stream keeps running (c stops it)".to_string()
+                } else {
+                    "log viewer closed".to_string()
+                };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.log_follow = false;
+                self.log_scroll = self.log_scroll.saturating_add(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.log_scroll = self.log_scroll.saturating_sub(1);
+                if self.log_scroll == 0 {
+                    self.log_follow = true;
+                }
+            }
+            KeyCode::PageUp => {
+                self.log_follow = false;
+                self.log_scroll = self.log_scroll.saturating_add(10);
+            }
+            KeyCode::PageDown => {
+                self.log_scroll = self.log_scroll.saturating_sub(10);
+                if self.log_scroll == 0 {
+                    self.log_follow = true;
+                }
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.log_follow = false;
+                self.log_scroll = self.logs.len();
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.log_follow = true;
+                self.log_scroll = 0;
+            }
+            KeyCode::Char('f') => {
+                self.log_follow = !self.log_follow;
+                if self.log_follow {
+                    self.log_scroll = 0;
+                }
+                self.status = format!("log follow {}", if self.log_follow { "on" } else { "off" });
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_yaml_viewer_key(&mut self, key: KeyEvent) {
+        let max_scroll = self.yaml_preview.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.overlay = Overlay::None;
+                self.status = "yaml viewer closed".to_string();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.yaml_scroll = self.yaml_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.yaml_scroll = (self.yaml_scroll + 1).min(max_scroll);
+            }
+            KeyCode::PageUp => self.yaml_scroll = self.yaml_scroll.saturating_sub(10),
+            KeyCode::PageDown => self.yaml_scroll = (self.yaml_scroll + 10).min(max_scroll),
+            KeyCode::Home | KeyCode::Char('g') => self.yaml_scroll = 0,
+            KeyCode::End | KeyCode::Char('G') => self.yaml_scroll = max_scroll,
+            _ => {}
+        }
+    }
+
+    fn plan_scale(&mut self) {
+        let Some(ResourceItem::Deployment(deployment)) = self.selected_item() else {
+            self.status = "select a deployment to scale".to_string();
+            return;
+        };
+        self.scale_replica_input.clear();
+        self.overlay = Overlay::ScalePrompt;
+        self.status = format!(
+            "scale {}: type replica count, Enter stages the plan, Esc cancels",
+            deployment.name
+        );
+    }
+
+    fn handle_scale_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.scale_replica_input.clear();
+                self.overlay = Overlay::None;
+                self.status = "scale cancelled".to_string();
+            }
+            KeyCode::Backspace => {
+                self.scale_replica_input.pop();
+            }
+            KeyCode::Enter => {
+                let Ok(replicas) = self.scale_replica_input.parse::<u32>() else {
+                    self.status = "scale: enter a non-negative integer".to_string();
+                    return;
+                };
+                let Some(ResourceItem::Deployment(deployment)) = self.selected_item() else {
+                    self.overlay = Overlay::None;
+                    return;
+                };
+                let label = format!("{}/{}", deployment.namespace, deployment.name);
+                self.overlay = Overlay::None;
+                self.operation_plan = Some(OperationPlanView {
+                    kind: OperationKind::ScaleDeployment,
+                    resource_type: "deployment".to_string(),
+                    namespace: deployment.namespace.clone(),
+                    target_name: deployment.name.clone(),
+                    target_label: label.clone(),
+                    risk: "side_effecting",
+                    confirmations_required: 1,
+                    confirmations: 0,
+                    replicas: Some(replicas),
+                });
+                self.scale_replica_input.clear();
+                self.status = format!("scale plan staged for {label} to {replicas}; press y");
+            }
+            KeyCode::Char(ch) if ch.is_ascii_digit() && self.scale_replica_input.len() < 4 => {
+                self.scale_replica_input.push(ch);
+            }
+            _ => {}
+        }
+    }
+
+    fn toggle_auto_refresh(&mut self) {
+        self.auto_refresh = !self.auto_refresh;
+        self.last_auto_refresh = Instant::now();
+        self.status = format!(
+            "auto refresh (5s) {}",
+            if self.auto_refresh {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+    }
+
+    fn maybe_auto_refresh(&mut self) -> bool {
+        if !self.auto_refresh {
+            return false;
+        }
+        if self.last_auto_refresh.elapsed() < AUTO_REFRESH_INTERVAL {
+            return false;
+        }
+        self.last_auto_refresh = Instant::now();
+        self.refresh_current();
+        true
+    }
+
+    fn request_quit(&mut self) {
+        let streams_active =
+            self.active_log_pod.is_some() || self.active_event_watch || self.mode == Mode::Exec;
+        if self.operation_plan.is_some() || streams_active {
+            self.overlay = Overlay::ConfirmQuit;
+            self.status =
+                "quit? streams or plans are active: y quits, any other key stays".to_string();
+            return;
+        }
+        self.should_quit = true;
+    }
+
+    fn handle_confirm_quit_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Enter => {
+                self.should_quit = true;
+            }
+            _ => {
+                self.overlay = Overlay::None;
+                self.status = "quit cancelled".to_string();
+            }
+        }
     }
 
     fn next_resource(&mut self) {
@@ -1133,7 +1486,6 @@ impl K8sTuiApp {
             ResourceKind::Events => ResourceKind::Nodes,
             ResourceKind::Nodes => ResourceKind::Pods,
         };
-        self.selected = 0;
         self.status = format!("resource view: {}", self.active.label());
     }
 
@@ -1145,7 +1497,6 @@ impl K8sTuiApp {
             ResourceKind::Events => ResourceKind::Services,
             ResourceKind::Nodes => ResourceKind::Events,
         };
-        self.selected = 0;
         self.status = format!("resource view: {}", self.active.label());
     }
 
@@ -1160,39 +1511,29 @@ impl K8sTuiApp {
             .position(|ns| ns == &self.active_namespace)
             .unwrap_or(0);
         self.active_namespace = self.namespaces[(idx + 1) % self.namespaces.len()].clone();
-        self.selected = 0;
+        self.selections = [0; ResourceKind::COUNT];
         self.refresh_all();
     }
 
-    fn previous_namespace(&mut self) {
-        if self.namespaces.is_empty() {
-            self.status = "no namespaces loaded".to_string();
+    fn request_list(&mut self, kind: ResourceKind) {
+        let Some(service) = &self.service else {
             return;
-        }
-        let idx = self
-            .namespaces
-            .iter()
-            .position(|ns| ns == &self.active_namespace)
-            .unwrap_or(0);
-        let next = if idx == 0 {
-            self.namespaces.len() - 1
-        } else {
-            idx - 1
         };
-        self.active_namespace = self.namespaces[next].clone();
-        self.selected = 0;
-        self.refresh_all();
+        self.pending[kind.index()] = true;
+        service.send(K8sCommand::ListResource {
+            resource_type: kind.resource_type().to_string(),
+            namespace: self.active_namespace.clone(),
+        });
     }
 
     fn refresh_all(&mut self) {
         if let Some(service) = &self.service {
             service.send(K8sCommand::ListNamespaces);
-            for resource_type in ["pods", "deployments", "services", "events", "nodes"] {
-                service.send(K8sCommand::ListResource {
-                    resource_type: resource_type.to_string(),
-                    namespace: self.active_namespace.clone(),
-                });
-            }
+        }
+        for kind in ResourceKind::ALL {
+            self.request_list(kind);
+        }
+        if self.service.is_some() {
             self.status = format!("refreshing namespace {}", self.active_namespace);
         } else {
             self.status = format!("fixture refresh: namespace {}", self.active_namespace);
@@ -1200,11 +1541,8 @@ impl K8sTuiApp {
     }
 
     fn refresh_current(&mut self) {
-        if let Some(service) = &self.service {
-            service.send(K8sCommand::ListResource {
-                resource_type: self.active.resource_type().to_string(),
-                namespace: self.active_namespace.clone(),
-            });
+        if self.service.is_some() {
+            self.request_list(self.active);
             self.status = format!("refreshing {}", self.active.label());
         } else {
             self.status = format!("fixture refresh: {}", self.active.label());
@@ -1216,12 +1554,7 @@ impl K8sTuiApp {
             return;
         }
         self.last_watch_poll = Instant::now();
-        if let Some(service) = &self.service {
-            service.send(K8sCommand::ListResource {
-                resource_type: "events".to_string(),
-                namespace: self.active_namespace.clone(),
-            });
-        }
+        self.request_list(ResourceKind::Events);
     }
 
     fn inspect_selected(&mut self) {
@@ -1229,6 +1562,25 @@ impl K8sTuiApp {
             self.status = "nothing selected".to_string();
             return;
         };
+        if let ResourceItem::Event(event) = &item {
+            // Events have no YAML document on the API; show the full message
+            // instead of calling an endpoint that always errors.
+            self.yaml_preview.clear();
+            self.yaml_preview
+                .push_line(format!("type: {}", event.event_type));
+            self.yaml_preview
+                .push_line(format!("reason: {}", event.reason));
+            self.yaml_preview
+                .push_line(format!("object: {}", event.object));
+            self.yaml_preview
+                .push_line(format!("count: {}  age: {}", event.count, event.age));
+            self.yaml_preview
+                .push_line(format!("message: {}", event.message));
+            self.yaml_scroll = 0;
+            self.overlay = Overlay::YamlViewer;
+            self.status = format!("event details for {}", event.object);
+            return;
+        }
         if let Some(service) = &self.service {
             service.send(K8sCommand::GetYaml {
                 resource_type: item.resource_type().to_string(),
@@ -1237,13 +1589,18 @@ impl K8sTuiApp {
                     .namespace()
                     .unwrap_or_else(|| self.active_namespace.clone()),
             });
-            self.status = format!("loading YAML preview for {}", item.safe_label());
+            self.status = format!(
+                "loading YAML for {} (full-screen viewer opens when loaded)",
+                item.safe_label()
+            );
         } else {
             self.yaml_preview.clear();
             self.yaml_preview
                 .push_line(format!("kind: {}", item.resource_type()));
             self.yaml_preview
                 .push_line(format!("metadata.name: {}", item.name()));
+            self.yaml_scroll = 0;
+            self.overlay = Overlay::YamlViewer;
             self.status = format!("fixture inspect: {}", item.safe_label());
         }
     }
@@ -1264,9 +1621,14 @@ impl K8sTuiApp {
             });
             self.logs.clear();
             self.active_log_pod = Some(pod.name.clone());
-            self.status = format!("following logs for {}; cancel with c", pod.name);
+            self.open_log_viewer();
+            self.status = format!(
+                "following logs for {}; Esc closes viewer, c stops stream",
+                pod.name
+            );
         } else {
             self.active_log_pod = Some(pod.name.clone());
+            self.open_log_viewer();
             self.status = format!("fixture logs shown for {}", pod.name);
         }
     }
@@ -1581,6 +1943,7 @@ impl K8sTuiApp {
                     risk: "destructive",
                     confirmations_required: 2,
                     confirmations: 0,
+                    replicas: None,
                 });
             }
             ("kubernetes.restart", "restart") => {
@@ -1593,6 +1956,7 @@ impl K8sTuiApp {
                     risk: "side_effecting",
                     confirmations_required: 1,
                     confirmations: 0,
+                    replicas: None,
                 });
             }
             _ => {
@@ -1619,6 +1983,7 @@ impl K8sTuiApp {
             risk: "side_effecting",
             confirmations_required: 1,
             confirmations: 0,
+            replicas: None,
         });
         self.status = format!("exec plan staged for {label}; press y");
     }
@@ -1648,6 +2013,7 @@ impl K8sTuiApp {
             risk: "destructive",
             confirmations_required: 2,
             confirmations: 0,
+            replicas: None,
         });
         self.status = format!("delete plan staged for {label}; press y twice");
     }
@@ -1667,6 +2033,7 @@ impl K8sTuiApp {
             risk: "side_effecting",
             confirmations_required: 1,
             confirmations: 0,
+            replicas: None,
         });
         self.status = format!("restart plan staged for {label}; press y");
     }
@@ -1712,6 +2079,12 @@ impl K8sTuiApp {
                     kind: "deployment".to_string(),
                     name: plan.target_name,
                     namespace: plan.namespace,
+                }),
+                OperationKind::ScaleDeployment => service.send(K8sCommand::ScaleResource {
+                    kind: "deployment".to_string(),
+                    name: plan.target_name,
+                    namespace: plan.namespace,
+                    replicas: plan.replicas.unwrap_or(0),
                 }),
                 OperationKind::ExecPod => {
                     self.exec_target = Some(plan.target_label.clone());
@@ -1766,15 +2139,12 @@ impl K8sTuiApp {
     }
 
     fn show_help(&mut self) {
-        self.return_mode = self.mode;
-        self.mode = Mode::Help;
-        self.status = "help open".to_string();
+        self.overlay = Overlay::Help;
+        self.status = "help open; any key closes".to_string();
     }
 
     fn trim_selection(&mut self) {
-        self.selected = self
-            .selected
-            .min(self.filtered_items().len().saturating_sub(1));
+        self.set_selected(self.selected());
     }
 
     fn filtered_items(&self) -> Vec<ResourceItem> {
@@ -1819,7 +2189,7 @@ impl K8sTuiApp {
     }
 
     fn selected_item(&self) -> Option<ResourceItem> {
-        self.filtered_items().get(self.selected).cloned()
+        self.filtered_items().get(self.selected()).cloned()
     }
 
     fn selected_pod(&self) -> Option<PodView> {
@@ -1961,11 +2331,20 @@ impl K8sTuiApp {
         frame.render_widget(self.stream_panel(), vertical[2]);
         frame.render_widget(self.status_panel(), vertical[3]);
 
-        match self.mode {
-            Mode::Help => self.draw_help(frame, area),
-            Mode::Error => self.draw_error(frame, area),
-            Mode::Exec => self.draw_exec_banner(frame, area),
-            Mode::Browser | Mode::Filter => {}
+        if self.mode == Mode::Exec {
+            self.draw_exec_banner(frame, area);
+        }
+        match self.overlay {
+            Overlay::None => {}
+            Overlay::Help => self.draw_help(frame, area),
+            Overlay::NamespacePicker => self.draw_namespace_picker(frame, area),
+            Overlay::LogViewer => self.draw_log_viewer(frame, area),
+            Overlay::YamlViewer => self.draw_yaml_viewer(frame, area),
+            Overlay::ScalePrompt => self.draw_scale_prompt(frame, area),
+            Overlay::ConfirmQuit => self.draw_confirm_quit(frame, area),
+        }
+        if let Some(error) = &self.error_banner {
+            self.draw_error_banner(frame, area, error);
         }
     }
 
@@ -1974,10 +2353,16 @@ impl K8sTuiApp {
         let tabs = ResourceKind::ALL
             .iter()
             .map(|kind| {
-                if *kind == self.active {
-                    format!("[{}]", kind.label())
+                let pending_mark = if self.pending[kind.index()] {
+                    "\u{27f3}"
                 } else {
-                    kind.label().to_string()
+                    ""
+                };
+                let label = format!("{}:{}{}", kind.hotkey(), kind.label(), pending_mark);
+                if *kind == self.active {
+                    format!("[{label}]")
+                } else {
+                    label
                 }
             })
             .collect::<Vec<_>>()
@@ -2011,15 +2396,15 @@ impl K8sTuiApp {
     fn resource_list(&self, area: Rect) -> Paragraph<'_> {
         let items = self.filtered_items();
         let visible = area.height.saturating_sub(2).max(1) as usize;
-        let start = window_start(self.selected, visible, items.len());
+        let start = window_start(self.selected(), visible, items.len());
         let lines = items
             .iter()
             .enumerate()
             .skip(start)
             .take(visible)
             .map(|(idx, item)| {
-                let marker = if idx == self.selected { ">" } else { " " };
-                let style = if idx == self.selected {
+                let marker = if idx == self.selected() { ">" } else { " " };
+                let style = if idx == self.selected() {
                     Style::default()
                         .fg(Color::Black)
                         .bg(Color::Green)
@@ -2033,17 +2418,21 @@ impl K8sTuiApp {
                 ))
             })
             .collect::<Vec<_>>();
-        Paragraph::new(if lines.is_empty() {
-            vec![Line::from("No resources loaded. Press r to refresh.")]
-        } else {
+        Paragraph::new(if !lines.is_empty() {
             lines
+        } else if self.pending[self.active.index()] {
+            vec![Line::from("loading\u{2026}")]
+        } else {
+            vec![Line::from(
+                "Nothing here yet. Press r to refresh, N to pick a namespace, / to filter.",
+            )]
         })
         .block(
             Block::default()
                 .title(format!(
                     " {} ({}/{}) ",
                     self.active.label(),
-                    self.selected.saturating_add(1).min(items.len()),
+                    self.selected().saturating_add(1).min(items.len()),
                     items.len()
                 ))
                 .borders(Borders::ALL),
@@ -2169,16 +2558,28 @@ impl K8sTuiApp {
     }
 
     fn status_panel(&self) -> Paragraph<'_> {
-        Paragraph::new(vec![Line::from(format!(
-            "{} | mode={} | namespaces={} | logs {} lines/{} dropped | exec {} lines/{} dropped",
-            self.primary_status(),
-            mode_label(self.mode),
-            self.namespaces.len(),
-            self.logs.len(),
-            self.logs.dropped_lines,
-            self.exec_output.len(),
-            self.exec_output.dropped_lines
-        ))])
+        let hints = if self.mode == Mode::Filter {
+            format!(
+                "filter: {}\u{258f} Enter apply \u{b7} Esc clear \u{b7} {} match(es)",
+                self.filter,
+                self.filtered_items().len()
+            )
+        } else {
+            BROWSER_HINTS.to_string()
+        };
+        Paragraph::new(vec![
+            Line::from(format!(
+                "{} | mode={} | namespaces={} | logs {}/{} dropped | exec {}/{} dropped",
+                self.primary_status(),
+                mode_label(self.mode),
+                self.namespaces.len(),
+                self.logs.len(),
+                self.logs.dropped_lines,
+                self.exec_output.len(),
+                self.exec_output.dropped_lines
+            )),
+            Line::from(Span::styled(hints, Style::default().fg(Color::DarkGray))),
+        ])
         .block(Block::default().title(" Status ").borders(Borders::ALL))
     }
 
@@ -2195,19 +2596,52 @@ impl K8sTuiApp {
     }
 
     fn draw_help(&self, frame: &mut Frame, area: Rect) {
-        let popup = centered_rect(72, 58, area);
+        let popup = centered_rect(78, 84, area);
         frame.render_widget(Clear, popup);
         let help = vec![
-            Line::from("Kubernetes operations TUI"),
-            Line::from("Tab / Shift+Tab: switch resource type"),
-            Line::from("n / N: switch namespace"),
-            Line::from("j/k: move  /: filter  r: refresh  i: YAML preview"),
-            Line::from("l: follow pod logs  w: event watch polling  c: cancel streams"),
-            Line::from("a: share bounded current-view context"),
-            Line::from("pending agent operation: y stage plan  d deny"),
-            Line::from("e: exec pod  x: delete resource  R: restart deployment"),
-            Line::from("y: confirm plan  Esc: cancel plan  q: quit"),
-            Line::from("Exec escape: Ctrl+] then q"),
+            Line::from(Span::styled(
+                "Navigation",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from("1-5 jump to pods/deployments/services/events/nodes (Tab cycles)"),
+            Line::from(
+                "j/k or arrows move \u{b7} PgUp/PgDn page \u{b7} g/G home/end \u{b7} selection is kept per kind",
+            ),
+            Line::from(
+                "N namespace picker (type to narrow, Enter switches) \u{b7} n next namespace",
+            ),
+            Line::from(
+                "/ filter (live, Esc clears) \u{b7} A auto-refresh current kind every 5s \u{b7} r refresh",
+            ),
+            Line::from(Span::styled(
+                "Inspect & streams",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from("i/Enter: YAML or event details in a full-screen scrollable viewer"),
+            Line::from(
+                "l: pod logs in the viewer (j/k/PgUp/PgDn scroll, f follow, Esc closes, stream keeps running)",
+            ),
+            Line::from("w: event watch polling \u{b7} c: cancel all streams"),
+            Line::from(Span::styled(
+                "Operations (staged plans, y confirms)",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(
+                "e exec pod \u{b7} x delete (y twice) \u{b7} R rollout restart \u{b7} s scale (type replicas)",
+            ),
+            Line::from(
+                "y confirm staged plan \u{b7} Esc cancel plan \u{b7} readonly launches block at confirm",
+            ),
+            Line::from(
+                "pending agent operation: y stages it onto the existing plan flow, d denies",
+            ),
+            Line::from("a: share bounded current-view context with an external agent"),
+            Line::from(Span::styled(
+                "Sessions",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
+            Line::from("q: quit (asks for confirmation while streams or plans are active)"),
+            Line::from("exec escape: Ctrl+] then q \u{b7} any key closes help"),
         ];
         frame.render_widget(
             Paragraph::new(help)
@@ -2218,21 +2652,229 @@ impl K8sTuiApp {
         );
     }
 
-    fn draw_error(&self, frame: &mut Frame, area: Rect) {
-        let popup = centered_rect(72, 40, area);
+    fn draw_namespace_picker(&self, frame: &mut Frame, area: Rect) {
+        let popup = centered_rect(60, 60, area);
+        frame.render_widget(Clear, popup);
+        let matches = self.filtered_namespaces();
+        let visible = popup.height.saturating_sub(5).max(1) as usize;
+        let start = window_start(self.ns_selected, visible, matches.len());
+        let mut lines = vec![
+            Line::from(Span::styled(
+                format!("filter: {}\u{258f}", self.ns_filter),
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::from(""),
+        ];
+        if matches.is_empty() {
+            lines.push(Line::from("no namespace matches the filter"));
+        } else {
+            lines.extend(
+                matches
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(visible)
+                    .map(|(idx, ns)| {
+                        let marker = if ns.as_str() == self.active_namespace.as_str() {
+                            "*"
+                        } else {
+                            " "
+                        };
+                        let style = if idx == self.ns_selected {
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Green)
+                                .add_modifier(Modifier::BOLD)
+                        } else if ns.as_str() == self.active_namespace.as_str() {
+                            Style::default().add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        };
+                        Line::from(Span::styled(format!("{marker} {ns}"), style))
+                    }),
+            );
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(Block::default()
+                    .title(format!(
+                        " Namespaces {}/{} \u{b7} type to narrow \u{b7} Enter switch \u{b7} Esc close ",
+                        self.ns_selected.saturating_add(1).min(matches.len().max(1)),
+                        matches.len()
+                    ))
+                    .borders(Borders::ALL))
+                .wrap(Wrap { trim: false }),
+            popup,
+        );
+    }
+
+    fn draw_log_viewer(&self, frame: &mut Frame, area: Rect) {
+        let popup = centered_rect(88, 82, area);
+        frame.render_widget(Clear, popup);
+        let visible = popup.height.saturating_sub(2).max(1) as usize;
+        let total = self.logs.len();
+        let body: Vec<Line> = if total == 0 {
+            vec![Line::from("no log lines retained for this stream")]
+        } else if self.log_follow {
+            self.logs
+                .tail(visible)
+                .into_iter()
+                .map(Line::from)
+                .collect()
+        } else {
+            let end = total.saturating_sub(self.log_scroll);
+            let start = end.saturating_sub(visible);
+            self.logs
+                .range(start, end)
+                .into_iter()
+                .map(Line::from)
+                .collect()
+        };
+        let follow_label = if self.log_follow {
+            "follow=f on"
+        } else {
+            "follow=f off"
+        };
+        frame.render_widget(
+            Paragraph::new(body)
+                .block(Block::default()
+                    .title(format!(
+                        " Logs \u{b7} {} \u{b7} {} lines retained \u{b7} j/k PgUp/PgDn scroll \u{b7} {} \u{b7} Esc close ",
+                        self.active_log_pod.as_deref().unwrap_or("no active stream"),
+                        total,
+                        follow_label
+                    ))
+                    .borders(Borders::ALL)),
+            popup,
+        );
+    }
+
+    fn draw_yaml_viewer(&self, frame: &mut Frame, area: Rect) {
+        let popup = centered_rect(84, 82, area);
+        frame.render_widget(Clear, popup);
+        let visible = popup.height.saturating_sub(2).max(1) as usize;
+        let total = self.yaml_preview.len();
+        let body: Vec<Line> = if total == 0 {
+            vec![Line::from(
+                "nothing inspected yet; press i/Enter on a resource",
+            )]
+        } else {
+            let start = self.yaml_scroll.min(total.saturating_sub(1));
+            self.yaml_preview
+                .range(start, start + visible)
+                .into_iter()
+                .map(Line::from)
+                .collect()
+        };
+        frame.render_widget(
+            Paragraph::new(body)
+                .block(Block::default()
+                    .title(format!(
+                        " YAML / details \u{b7} line {}/{} \u{b7} j/k PgUp/PgDn scroll \u{b7} Esc close ",
+                        (self.yaml_scroll + 1).min(total),
+                        total
+                    ))
+                    .borders(Borders::ALL)),
+            popup,
+        );
+    }
+
+    fn draw_scale_prompt(&self, frame: &mut Frame, area: Rect) {
+        let popup = centered_rect(50, 22, area);
+        frame.render_widget(Clear, popup);
+        let target = match self.selected_item() {
+            Some(ResourceItem::Deployment(deployment)) => {
+                format!("{}/{}", deployment.namespace, deployment.name)
+            }
+            _ => "no deployment selected".to_string(),
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from("replicas:"),
+                Line::from(Span::styled(
+                    format!("{}\u{258f}", self.scale_replica_input),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from("Enter stages the plan \u{b7} y confirms \u{b7} Esc cancels"),
+            ])
+            .block(
+                Block::default()
+                    .title(format!(" Scale {target} "))
+                    .borders(Borders::ALL),
+            ),
+            popup,
+        );
+    }
+
+    fn draw_confirm_quit(&self, frame: &mut Frame, area: Rect) {
+        let popup = centered_rect(56, 22, area);
         frame.render_widget(Clear, popup);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(Span::styled(
-                    "Kubernetes target error",
-                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    "Quit with active work?",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
                 )),
-                Line::from(self.status.clone()),
-                Line::from("Press any key to return to the browser."),
+                Line::from(self.active_work_summary()),
+                Line::from("y/Enter: quit \u{b7} any other key: stay"),
             ])
-            .block(Block::default().title(" Error ").borders(Borders::ALL))
+            .block(
+                Block::default()
+                    .title(" Confirm Quit ")
+                    .borders(Borders::ALL),
+            )
             .wrap(Wrap { trim: false }),
             popup,
+        );
+    }
+
+    fn active_work_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(pod) = &self.active_log_pod {
+            parts.push(format!("log stream {pod}"));
+        }
+        if self.active_event_watch {
+            parts.push("event watch".to_string());
+        }
+        if let Some(plan) = &self.operation_plan {
+            parts.push(format!(
+                "{} plan on {}",
+                plan.kind.label(),
+                plan.target_label
+            ));
+        }
+        if parts.is_empty() {
+            "no active streams or plans".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
+
+    fn draw_error_banner(&self, frame: &mut Frame, area: Rect, error: &str) {
+        let banner = Rect {
+            x: area.x + 1,
+            y: area.height.saturating_sub(6),
+            width: area.width.saturating_sub(2),
+            height: 3,
+        };
+        frame.render_widget(Clear, banner);
+        frame.render_widget(
+            Paragraph::new(vec![Line::from(Span::styled(
+                safe_error_summary(error),
+                Style::default().fg(Color::Red),
+            ))])
+            .block(
+                Block::default()
+                    .title(" Error (any key acknowledges) ")
+                    .borders(Borders::ALL)
+                    .style(Style::default().fg(Color::Red)),
+            )
+            .wrap(Wrap { trim: false }),
+            banner,
         );
     }
 
@@ -2304,6 +2946,15 @@ impl BoundedLines {
         }
     }
 
+    fn range(&self, start: usize, end: usize) -> Vec<String> {
+        self.lines
+            .iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .cloned()
+            .collect()
+    }
+
     fn tail(&self, count: usize) -> Vec<String> {
         self.lines
             .iter()
@@ -2318,6 +2969,8 @@ impl BoundedLines {
 }
 
 impl ResourceKind {
+    const COUNT: usize = 5;
+
     const ALL: [ResourceKind; 5] = [
         ResourceKind::Pods,
         ResourceKind::Deployments,
@@ -2325,6 +2978,20 @@ impl ResourceKind {
         ResourceKind::Events,
         ResourceKind::Nodes,
     ];
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|kind| *kind == self).unwrap_or(0)
+    }
+
+    fn hotkey(self) -> &'static str {
+        match self {
+            ResourceKind::Pods => "1",
+            ResourceKind::Deployments => "2",
+            ResourceKind::Services => "3",
+            ResourceKind::Events => "4",
+            ResourceKind::Nodes => "5",
+        }
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -2465,6 +3132,7 @@ impl OperationKind {
         match self {
             OperationKind::DeleteResource => "delete resource",
             OperationKind::RestartDeployment => "rollout restart",
+            OperationKind::ScaleDeployment => "scale deployment",
             OperationKind::ExecPod => "exec pod",
         }
     }
@@ -2737,8 +3405,6 @@ fn mode_label(mode: Mode) -> &'static str {
     match mode {
         Mode::Browser => "browser",
         Mode::Filter => "filter",
-        Mode::Help => "help",
-        Mode::Error => "error",
         Mode::Exec => "exec",
     }
 }
@@ -3056,9 +3722,151 @@ mod tests {
     fn uppercase_a_is_not_an_operation_shortcut() {
         let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
         app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::NONE));
-        assert!(app.status.contains("a share context"));
+        // Uppercase A toggles auto refresh; it must never stage or deny an
+        // agent operation.
+        assert!(app.status.contains("auto refresh"));
+        assert!(app.operation_request.is_none());
+        assert!(app.operation_plan.is_none());
+        assert!(app.context_share.is_none());
         assert!(!app.status.contains("assist"));
         assert!(!app.status.contains("poll"));
+    }
+
+    #[test]
+    fn number_keys_jump_resource_kinds_and_keep_selection() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.active, ResourceKind::Deployments);
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let deployment_selection = app.selected();
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        assert_eq!(app.active, ResourceKind::Pods);
+        // Per-kind selection memory: returning to deployments keeps the row.
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert_eq!(app.selected(), deployment_selection);
+    }
+
+    fn press(app: &mut K8sTuiApp, code: KeyCode) {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    fn type_text(app: &mut K8sTuiApp, text: &str) {
+        for ch in text.chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+    }
+
+    #[test]
+    fn namespace_picker_filters_and_switches() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::Char('N'));
+        assert_eq!(app.overlay, Overlay::NamespacePicker);
+        type_text(&mut app, "ops");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.overlay, Overlay::None);
+        assert_eq!(app.active_namespace, "ops");
+        assert!(app.status.contains("namespace ops"));
+    }
+
+    #[test]
+    fn log_viewer_scrolls_pauses_and_closes() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.overlay, Overlay::LogViewer);
+        assert!(app.log_follow);
+        let total = app.logs.len();
+        press(&mut app, KeyCode::Up);
+        assert!(!app.log_follow);
+        assert_eq!(app.log_scroll, 1);
+        press(&mut app, KeyCode::End);
+        assert!(app.log_follow);
+        assert_eq!(app.log_scroll, 0);
+        press(&mut app, KeyCode::Char('f'));
+        assert!(!app.log_follow);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
+        assert!(app.log_follow);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(
+            app.active_log_pod.is_some(),
+            "closing the viewer keeps the stream"
+        );
+        assert_eq!(app.logs.len(), total);
+    }
+
+    #[test]
+    fn inspect_opens_yaml_viewer_and_event_details_without_error() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.overlay, Overlay::YamlViewer);
+        assert!(app.status.contains("fixture inspect"));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.overlay, Overlay::None);
+
+        press(&mut app, KeyCode::Char('4'));
+        assert_eq!(app.active, ResourceKind::Events);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.overlay, Overlay::YamlViewer);
+        assert!(app.status.contains("event details"));
+        assert!(!app.status.contains("forbidden"));
+    }
+
+    #[test]
+    fn scale_prompt_stages_plan_requiring_confirmation() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!(app.overlay, Overlay::ScalePrompt);
+        type_text(&mut app, "3");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.overlay, Overlay::None);
+        let plan = app.operation_plan.clone().expect("scale plan staged");
+        assert_eq!(plan.kind, OperationKind::ScaleDeployment);
+        assert_eq!(plan.replicas, Some(3));
+        // Confirmation executes the staged plan (fixture short-circuit).
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.operation_plan.is_none());
+        assert!(app.status.contains("fixture executed scale deployment"));
+    }
+
+    #[test]
+    fn quit_with_active_stream_requires_confirmation() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Char('q'));
+        assert_eq!(app.overlay, Overlay::ConfirmQuit);
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.overlay, Overlay::None);
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Char('q'));
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn background_error_becomes_banner_not_modal() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        app.handle_service_event(K8sServiceEvent::Error(
+            "watch failed: connection refused".to_string(),
+        ));
+        assert_eq!(app.mode, Mode::Browser, "errors must not hijack the mode");
+        assert!(app.error_banner.is_some());
+        // Any key acknowledges the banner while keeping its normal meaning.
+        press(&mut app, KeyCode::Char('j'));
+        assert!(app.error_banner.is_none());
+        assert_eq!(app.mode, Mode::Browser);
+    }
+
+    #[test]
+    fn page_keys_move_selection() {
+        let mut app = K8sTuiApp::new(fixture_launch(false)).unwrap();
+        press(&mut app, KeyCode::PageDown);
+        let len = app.filtered_items().len();
+        assert_eq!(app.selected(), len.saturating_sub(1));
+        press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.selected(), 0);
     }
 
     fn temp_context_share_store() -> AgentContextShareStore {
