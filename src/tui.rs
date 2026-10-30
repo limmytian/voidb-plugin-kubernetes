@@ -31,7 +31,7 @@ use crate::config::{K8sAuth, K8sConfig, K8sConnection};
 use crate::service::{K8sCommand, K8sService, K8sServiceEvent};
 use crate::types::{DeploymentInfo, EventInfo, NodeInfo, PodInfo, PodStatus, ServiceInfo};
 
-const BROWSER_HINTS: &str = "1-5 kind N namespaces n next-ns j/k move PgUp/PgDn page / filter i yaml l logs s scale x delete R restart e exec w watch A auto r refresh a share y confirm Esc cancel ? help q quit";
+const BROWSER_HINTS: &str = "1-5 kind N ns-picker j/k / filter i yaml l logs s scale x del R restart e exec w watch A auto r refresh a share ? q quit";
 const LOG_LINE_LIMIT: usize = 2_000;
 const LOG_BYTE_LIMIT: usize = 2 * 1024 * 1024;
 const EXEC_LINE_LIMIT: usize = 1_000;
@@ -2314,10 +2314,12 @@ impl K8sTuiApp {
         let vertical = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                // Header and status each carry two content rows (title+tabs,
+                // status+hints) on top of their borders.
+                Constraint::Length(4),
                 Constraint::Min(12),
                 Constraint::Length(8),
-                Constraint::Length(3),
+                Constraint::Length(4),
             ])
             .split(area);
 
