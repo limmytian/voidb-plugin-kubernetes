@@ -222,52 +222,59 @@ impl K8sAgentService {
                 {
                     return;
                 }
+                // Spawn each tunnel so concurrent clients to the forwarded
+                // port are served in parallel instead of serializing behind
+                // the first connection's copy loop.
+                let mut cancel_per_connection = cancel_receiver.clone();
+                let event_sender_per_connection = event_sender.clone();
                 let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-                let mut forwarder = match pods.portforward(&pod, &[remote_port]).await {
-                    Ok(forwarder) => forwarder,
-                    Err(error) => {
-                        let class = kube_error_class(&error.to_string());
-                        let _ = event_sender
-                            .send(K8sPortForwardEvent::Error { class })
-                            .await;
-                        continue;
-                    }
-                };
-                let Some(mut remote) = forwarder.take_stream(remote_port) else {
-                    let _ = event_sender
-                        .send(K8sPortForwardEvent::Error { class: "protocol" })
-                        .await;
-                    forwarder.abort();
-                    continue;
-                };
-                let copy_result = tokio::select! {
-                    changed = cancel_receiver.changed() => {
-                        let _ = changed;
-                        None
-                    }
-                    copied = tokio::io::copy_bidirectional(&mut local, &mut remote) => Some(copied),
-                };
-                forwarder.abort();
-                match copy_result {
-                    None => return,
-                    Some(Ok((to_remote, to_local))) => {
-                        if event_sender
-                            .send(K8sPortForwardEvent::ConnectionClosed {
-                                to_remote,
-                                to_local,
-                            })
-                            .await
-                            .is_err()
-                        {
+                let pod_for_task = pod.clone();
+                tokio::spawn(async move {
+                    let mut forwarder = match pods.portforward(&pod_for_task, &[remote_port]).await
+                    {
+                        Ok(forwarder) => forwarder,
+                        Err(error) => {
+                            let class = kube_error_class(&error.to_string());
+                            let _ = event_sender_per_connection
+                                .send(K8sPortForwardEvent::Error { class })
+                                .await;
                             return;
                         }
-                    }
-                    Some(Err(_)) => {
-                        let _ = event_sender
-                            .send(K8sPortForwardEvent::Error { class: "transport" })
+                    };
+                    let Some(mut remote) = forwarder.take_stream(remote_port) else {
+                        let _ = event_sender_per_connection
+                            .send(K8sPortForwardEvent::Error { class: "protocol" })
                             .await;
+                        forwarder.abort();
+                        return;
+                    };
+                    let copy_result = tokio::select! {
+                        changed = cancel_per_connection.changed() => {
+                            let _ = changed;
+                            None
+                        }
+                        copied = tokio::io::copy_bidirectional(&mut local, &mut remote) => {
+                            Some(copied)
+                        }
+                    };
+                    forwarder.abort();
+                    match copy_result {
+                        None => {}
+                        Some(Ok((to_remote, to_local))) => {
+                            let _ = event_sender_per_connection
+                                .send(K8sPortForwardEvent::ConnectionClosed {
+                                    to_remote,
+                                    to_local,
+                                })
+                                .await;
+                        }
+                        Some(Err(_)) => {
+                            let _ = event_sender_per_connection
+                                .send(K8sPortForwardEvent::Error { class: "transport" })
+                                .await;
+                        }
                     }
-                }
+                });
             }
         });
         Ok(K8sPortForwardParts {
