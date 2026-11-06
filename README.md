@@ -30,34 +30,34 @@ Independent process plugin for [VoidB](https://github.com/limmytian/voidb) to co
 
 ## Usage & Operational Modes
 
-When installed, `voidb-cli` automatically discovers this plugin and provides seamless transparent dispatch:
+When installed, `vb` automatically discovers this plugin and provides seamless transparent dispatch:
 
 ### 1. Human Operations (CLI & TUI)
 
 ```bash
 # Connectivity test
-voidb-cli kubernetes test --profile my-k8s-cluster
+vb kubernetes test --profile my-k8s-cluster
 
 # Launch standalone interactive fullscreen TUI
-voidb-cli kubernetes tui --profile my-k8s-cluster
+vb kubernetes tui --profile my-k8s-cluster
 
 # Cluster resource inspection
-voidb-cli kubernetes namespaces --profile my-k8s-cluster
-voidb-cli kubernetes pods -n default --profile my-k8s-cluster
-voidb-cli kubernetes deployments --profile my-k8s-cluster
-voidb-cli kubernetes services --profile my-k8s-cluster
+vb kubernetes namespaces --profile my-k8s-cluster
+vb kubernetes pods -n default --profile my-k8s-cluster
+vb kubernetes deployments --profile my-k8s-cluster
+vb kubernetes services --profile my-k8s-cluster
 
 # Pod logs and workloads
-voidb-cli kubernetes logs my-pod -c app --tail 100 --profile my-k8s-cluster
-voidb-cli kubernetes scale deployment/my-app --replicas 3 --profile my-k8s-cluster
-voidb-cli kubernetes restart deployment/my-app --profile my-k8s-cluster
+vb kubernetes logs my-pod -c app --tail 100 --profile my-k8s-cluster
+vb kubernetes scale deployment/my-app --replicas 3 --profile my-k8s-cluster
+vb kubernetes restart deployment/my-app --profile my-k8s-cluster
 ```
 
 ### 2. Machine Communication (AI Agents & JSON-RPC)
 
 ```bash
-# Run the stdio-jsonrpc server directly or via voidb-cli
-voidb-cli kubernetes serve
+# Run the stdio-jsonrpc server directly or via vb
+vb kubernetes serve
 # Or directly run the binary:
 ./bin/voidb-plugin-kubernetes serve
 ```
@@ -76,8 +76,8 @@ cp -r plugin.toml bin schemas "$HOME/Library/Application Support/voidb/plugins/k
 Verify discovery via `voidb`:
 
 ```bash
-voidb-cli plugin list
-voidb-cli kubernetes --help
+vb plugin list
+vb kubernetes --help
 ```
 
 ### Development & Build
