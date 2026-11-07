@@ -213,7 +213,7 @@ set +a
 
 (
   cd "${REPO_ROOT}"
-  cargo run -p voidb-plugin-kubernetes --example kubernetes_fixture_smoke --quiet
+  cargo run -p voidb-plugin-kubernetes --example fixture_smoke --quiet
 ) > "${smoke_log}" 2>&1 || {
   exercise_status=$?
   echo "capability exercise failed; smoke log tail:" >&2
